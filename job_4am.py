@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from config import WATCHLIST, DERIVED_TICKERS
 from tradier import get_quotes
 from db import upsert_rows
+from email_report import send_snapshot_report
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +82,9 @@ def run_4am_snapshot():
 
     ok = upsert_rows("snapshots_4am", rows)
     logger.info(f"=== Saved {len(rows)} rows to snapshots_4am — {'OK' if ok else 'FAILED'} ===")
+
+    # Send the 3AM snapshot email
+    send_snapshot_report(rows, snap_date)
 
 
 if __name__ == "__main__":
