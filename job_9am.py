@@ -9,6 +9,7 @@ the email report.
 import logging
 import time
 from datetime import datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from config import WATCHLIST, ALL_TICKERS, DERIVED_TICKERS
@@ -40,7 +41,7 @@ def round_levels(price: float, step: float = 0.50, count: int = 4) -> list[float
     return sorted(levels)
 
 
-def calc_loi(ticker: str, sector: str, snap_date: str, snap_ts: str) -> dict | None:
+def calc_loi(ticker: str, sector: str, snap_date: str, snap_ts: str) -> Optional[dict]:
     """
     Build the full LOI record for one ticker.
     """

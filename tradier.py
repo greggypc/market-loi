@@ -1,6 +1,7 @@
 import requests
 import logging
 from datetime import datetime, timedelta
+from typing import Optional
 from config import TRADIER_TOKEN, TRADIER_BASE, DERIVED_TICKERS
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ def get_history(ticker: str, days_back: int = 5) -> list[dict]:
         return []
 
 
-def get_prior_day_ohlc(ticker: str) -> dict | None:
+def get_prior_day_ohlc(ticker: str) -> Optional[dict]:
     """
     Returns the most recent completed trading day's OHLC.
     """
