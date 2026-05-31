@@ -7,9 +7,12 @@ Flask app serving:
 """
 
 import logging
+import os
 from datetime import datetime
+from functools import wraps
 from zoneinfo import ZoneInfo
-from flask import Flask, render_template_string, jsonify, request
+from flask import (Flask, render_template_string, jsonify,
+                   request, session, redirect, url_for)
 
 from db import fetch_latest, get_watchlist, add_ticker, remove_ticker, ticker_exists_in_watchlist
 from tradier import verify_ticker
@@ -17,7 +20,34 @@ from config import SECTORS
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
+app.secret_key = os.environ.get("DASHBOARD_SECRET", "change-me-in-railway")
 CT  = ZoneInfo("America/Chicago")
+
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+
+
+def login_required(f):
+    """Decorator — redirects to login page if not authenticated."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not DASHBOARD_PASSWORD:
+            return f(*args, **kwargs)          # no password set → open access
+        if not session.get("authenticated"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def api_auth_required(f):
+    """Decorator for API routes — returns 401 JSON if not authenticated."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not DASHBOARD_PASSWORD:
+            return f(*args, **kwargs)
+        if not session.get("authenticated"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -146,6 +176,7 @@ DASHBOARD_HTML = """
   <h1>📊 Market LOI Dashboard</h1>
   <span>{{ date }} &nbsp;|&nbsp; {{ total }} tickers</span>
   <button class="refresh-btn" onclick="location.reload()">↺ Refresh</button>
+  <a href="/logout" style="padding:4px 12px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;text-decoration:none;font-size:11px;white-space:nowrap;">Sign Out</a>
 </header>
 
 <div class="tabs">
@@ -406,7 +437,72 @@ def fmt_pct_filter(val):
     return fmt_pct(val)
 
 
+LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Market LOI — Login</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f172a; color: #e2e8f0;
+           font-family: 'Courier New', monospace;
+           display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; }
+    .card { background: #1e293b; border: 1px solid #334155;
+            border-radius: 8px; padding: 32px; width: 320px; }
+    h1 { font-size: 16px; color: #38bdf8; margin-bottom: 6px; }
+    p  { font-size: 11px; color: #94a3b8; margin-bottom: 24px; }
+    label { font-size: 10px; color: #94a3b8; display: block; margin-bottom: 4px; }
+    input { width: 100%; background: #0f172a; border: 1px solid #334155;
+            color: #e2e8f0; padding: 8px 10px; border-radius: 4px;
+            font-family: inherit; font-size: 12px; margin-bottom: 16px; }
+    input:focus { outline: none; border-color: #38bdf8; }
+    button { width: 100%; padding: 8px; background: #1e3a5f;
+             color: #38bdf8; border: 1px solid #38bdf8; border-radius: 4px;
+             cursor: pointer; font-family: inherit; font-size: 12px; }
+    button:hover { background: #1e4a7f; }
+    .error { color: #f87171; font-size: 11px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📊 Market LOI Dashboard</h1>
+    <p>Enter your password to continue.</p>
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="POST" action="/login">
+      <label>Password</label>
+      <input type="password" name="password" autofocus
+             placeholder="••••••••••••">
+      <button type="submit">Sign In →</button>
+    </form>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        if request.form.get("password") == DASHBOARD_PASSWORD:
+            session["authenticated"] = True
+            return redirect(url_for("dashboard"))
+        return render_template_string(LOGIN_HTML, error="Incorrect password.")
+    return render_template_string(LOGIN_HTML, error=None)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
+@login_required
 def dashboard():
     today     = datetime.now(CT).strftime("%Y-%m-%d")
     loi_rows  = fetch_latest("lois_9am",     today)
@@ -427,6 +523,7 @@ def dashboard():
 
 
 @app.route("/api/verify/<symbol>")
+@api_auth_required
 def api_verify(symbol):
     """Verify a ticker against Tradier and check it's not already in watchlist."""
     result = verify_ticker(symbol.upper())
@@ -437,6 +534,7 @@ def api_verify(symbol):
 
 
 @app.route("/api/watchlist/add", methods=["POST"])
+@api_auth_required
 def api_add():
     data   = request.get_json()
     symbol = (data.get("symbol") or "").upper().strip()
@@ -445,7 +543,6 @@ def api_add():
     if not symbol:
         return jsonify({"ok": False, "error": "No symbol provided"})
 
-    # Re-verify before committing
     check = verify_ticker(symbol)
     if not check["valid"]:
         return jsonify({"ok": False, "error": check["error"]})
@@ -460,6 +557,7 @@ def api_add():
 
 
 @app.route("/api/watchlist/remove/<symbol>", methods=["POST"])
+@api_auth_required
 def api_remove(symbol):
     ok = remove_ticker(symbol.upper())
     if ok:
@@ -468,10 +566,13 @@ def api_remove(symbol):
 
 
 @app.route("/api/loi/<date>")
+@api_auth_required
 def api_loi(date):
     return jsonify(fetch_latest("lois_9am", date))
 
+
 @app.route("/api/snapshot/<date>")
+@api_auth_required
 def api_snapshot(date):
     return jsonify(fetch_latest("snapshots_4am", date))
 
