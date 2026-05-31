@@ -2,17 +2,21 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from config import TRADIER_TOKEN, TRADIER_BASE, DERIVED_TICKERS
+from config import TRADIER_BASE, DERIVED_TICKERS
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {
-    "Authorization": f"Bearer {TRADIER_TOKEN}",
-    "Accept": "application/json",
-}
+
+def _headers():
+    """Build headers fresh on every call so the token is always current."""
+    from config import TRADIER_TOKEN
+    return {
+        "Authorization": f"Bearer {TRADIER_TOKEN}",
+        "Accept": "application/json",
+    }
 
 
-def get_quotes(tickers: list[str]) -> dict:
+def get_quotes(tickers: list) -> dict:
     """
     Fetch real-time quotes for a list of tickers.
     Returns dict keyed by symbol.
@@ -21,7 +25,7 @@ def get_quotes(tickers: list[str]) -> dict:
     try:
         r = requests.get(
             f"{TRADIER_BASE}/markets/quotes",
-            headers=HEADERS,
+            headers=_headers(),
             params={"symbols": symbols, "greeks": "false"},
             timeout=15,
         )
@@ -36,15 +40,15 @@ def get_quotes(tickers: list[str]) -> dict:
 
 
 def get_timesales(ticker: str, interval: str = "1min",
-                  start: str = None, end: str = None) -> list[dict]:
+                  start: str = None, end: str = None) -> list:
     """
     Fetch intraday time & sales bars.
     interval: 1min | 5min | 15min | tick
     start/end: 'YYYY-MM-DD HH:MM' format
     """
     params = {
-        "symbol": ticker,
-        "interval": interval,
+        "symbol":         ticker,
+        "interval":       interval,
         "session_filter": "all",  # includes premarket
     }
     if start:
@@ -55,7 +59,7 @@ def get_timesales(ticker: str, interval: str = "1min",
     try:
         r = requests.get(
             f"{TRADIER_BASE}/markets/timesales",
-            headers=HEADERS,
+            headers=_headers(),
             params=params,
             timeout=15,
         )
@@ -72,7 +76,7 @@ def get_timesales(ticker: str, interval: str = "1min",
         return []
 
 
-def get_history(ticker: str, days_back: int = 5) -> list[dict]:
+def get_history(ticker: str, days_back: int = 5) -> list:
     """
     Fetch daily OHLCV history for the past N calendar days.
     """
@@ -81,12 +85,12 @@ def get_history(ticker: str, days_back: int = 5) -> list[dict]:
     try:
         r = requests.get(
             f"{TRADIER_BASE}/markets/history",
-            headers=HEADERS,
+            headers=_headers(),
             params={
-                "symbol":    ticker,
-                "interval":  "daily",
-                "start":     start_date,
-                "end":       end_date,
+                "symbol":   ticker,
+                "interval": "daily",
+                "start":    start_date,
+                "end":      end_date,
             },
             timeout=15,
         )
@@ -110,7 +114,6 @@ def get_prior_day_ohlc(ticker: str) -> Optional[dict]:
     days = get_history(ticker, days_back=7)
     if not days:
         return None
-    # Last entry is the most recent completed day
     d = days[-1]
     return {
         "date":   d.get("date"),
@@ -131,14 +134,13 @@ def verify_ticker(symbol: str) -> dict:
     try:
         r = requests.get(
             f"{TRADIER_BASE}/markets/quotes",
-            headers=HEADERS,
+            headers=_headers(),
             params={"symbols": symbol, "greeks": "false"},
             timeout=10,
         )
         r.raise_for_status()
         data = r.json().get("quotes", {}).get("quote")
 
-        # Tradier returns null or a dict with no 'last' for unknown symbols
         if not data or data == "null":
             return {"valid": False, "error": f"Symbol '{symbol}' not found on Tradier"}
 
@@ -165,7 +167,7 @@ def verify_ticker(symbol: str) -> dict:
 def get_premarket_range(ticker: str, snapshot_date: str = None) -> dict:
     """
     Calculate premarket high, low, open (first bar), and VWAP
-    from 4:00AM to 9:29AM CT using 1-minute bars.
+    from 3:00AM to 8:29AM CT using 1-minute bars.
     snapshot_date: 'YYYY-MM-DD', defaults to today
     """
     if ticker in DERIVED_TICKERS:
@@ -183,10 +185,9 @@ def get_premarket_range(ticker: str, snapshot_date: str = None) -> dict:
         return {"high": None, "low": None, "open": None, "vwap": None,
                 "note": "no premarket data"}
 
-    highs   = [float(b["high"])   for b in bars]
-    lows    = [float(b["low"])    for b in bars]
-    volumes = [int(b["volume"])   for b in bars]
-    vwaps   = [float(b["vwap"])   for b in bars if b.get("vwap")]
+    highs   = [float(b["high"])  for b in bars]
+    lows    = [float(b["low"])   for b in bars]
+    volumes = [int(b["volume"])  for b in bars]
 
     total_vol = sum(volumes)
     weighted_vwap = (
@@ -196,10 +197,10 @@ def get_premarket_range(ticker: str, snapshot_date: str = None) -> dict:
     )
 
     return {
-        "high":   max(highs),
-        "low":    min(lows),
-        "open":   float(bars[0]["open"]),   # first premarket bar open
-        "vwap":   round(weighted_vwap, 4) if weighted_vwap else None,
-        "bars":   len(bars),
-        "note":   None,
+        "high": max(highs),
+        "low":  min(lows),
+        "open": float(bars[0]["open"]),
+        "vwap": round(weighted_vwap, 4) if weighted_vwap else None,
+        "bars": len(bars),
+        "note": None,
     }
