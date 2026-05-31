@@ -1,0 +1,164 @@
+import requests
+import logging
+from datetime import datetime, timedelta
+from config import TRADIER_TOKEN, TRADIER_BASE, DERIVED_TICKERS
+
+logger = logging.getLogger(__name__)
+
+HEADERS = {
+    "Authorization": f"Bearer {TRADIER_TOKEN}",
+    "Accept": "application/json",
+}
+
+
+def get_quotes(tickers: list[str]) -> dict:
+    """
+    Fetch real-time quotes for a list of tickers.
+    Returns dict keyed by symbol.
+    """
+    symbols = ",".join(tickers)
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            headers=HEADERS,
+            params={"symbols": symbols, "greeks": "false"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json().get("quotes", {}).get("quote", [])
+        if isinstance(data, dict):
+            data = [data]
+        return {q["symbol"]: q for q in data if q}
+    except Exception as e:
+        logger.error(f"get_quotes failed: {e}")
+        return {}
+
+
+def get_timesales(ticker: str, interval: str = "1min",
+                  start: str = None, end: str = None) -> list[dict]:
+    """
+    Fetch intraday time & sales bars.
+    interval: 1min | 5min | 15min | tick
+    start/end: 'YYYY-MM-DD HH:MM' format
+    """
+    params = {
+        "symbol": ticker,
+        "interval": interval,
+        "session_filter": "all",  # includes premarket
+    }
+    if start:
+        params["start"] = start
+    if end:
+        params["end"] = end
+
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/timesales",
+            headers=HEADERS,
+            params=params,
+            timeout=15,
+        )
+        r.raise_for_status()
+        series = r.json().get("series", {})
+        if not series or series == "null":
+            return []
+        data = series.get("data", [])
+        if isinstance(data, dict):
+            data = [data]
+        return data or []
+    except Exception as e:
+        logger.error(f"get_timesales({ticker}) failed: {e}")
+        return []
+
+
+def get_history(ticker: str, days_back: int = 5) -> list[dict]:
+    """
+    Fetch daily OHLCV history for the past N calendar days.
+    """
+    end_date   = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/history",
+            headers=HEADERS,
+            params={
+                "symbol":    ticker,
+                "interval":  "daily",
+                "start":     start_date,
+                "end":       end_date,
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        history = r.json().get("history", {})
+        if not history or history == "null":
+            return []
+        days = history.get("day", [])
+        if isinstance(days, dict):
+            days = [days]
+        return days or []
+    except Exception as e:
+        logger.error(f"get_history({ticker}) failed: {e}")
+        return []
+
+
+def get_prior_day_ohlc(ticker: str) -> dict | None:
+    """
+    Returns the most recent completed trading day's OHLC.
+    """
+    days = get_history(ticker, days_back=7)
+    if not days:
+        return None
+    # Last entry is the most recent completed day
+    d = days[-1]
+    return {
+        "date":   d.get("date"),
+        "open":   float(d.get("open",  0)),
+        "high":   float(d.get("high",  0)),
+        "low":    float(d.get("low",   0)),
+        "close":  float(d.get("close", 0)),
+        "volume": int(d.get("volume",  0)),
+    }
+
+
+def get_premarket_range(ticker: str, snapshot_date: str = None) -> dict:
+    """
+    Calculate premarket high, low, open (first bar), and VWAP
+    from 4:00AM to 9:29AM CT using 1-minute bars.
+    snapshot_date: 'YYYY-MM-DD', defaults to today
+    """
+    if ticker in DERIVED_TICKERS:
+        return {"high": None, "low": None, "open": None, "vwap": None,
+                "note": "derived index — no premarket bid/ask"}
+
+    date = snapshot_date or datetime.now().strftime("%Y-%m-%d")
+
+    # 3:00AM CT (= 4AM ET) is premarket open; capture through 8:29AM CT (= 9:29AM ET)
+    start = f"{date} 03:00"
+    end   = f"{date} 08:29"
+
+    bars = get_timesales(ticker, interval="1min", start=start, end=end)
+    if not bars:
+        return {"high": None, "low": None, "open": None, "vwap": None,
+                "note": "no premarket data"}
+
+    highs   = [float(b["high"])   for b in bars]
+    lows    = [float(b["low"])    for b in bars]
+    volumes = [int(b["volume"])   for b in bars]
+    vwaps   = [float(b["vwap"])   for b in bars if b.get("vwap")]
+
+    total_vol = sum(volumes)
+    weighted_vwap = (
+        sum(float(b["vwap"]) * int(b["volume"]) for b in bars if b.get("vwap"))
+        / total_vol
+        if total_vol > 0 else None
+    )
+
+    return {
+        "high":   max(highs),
+        "low":    min(lows),
+        "open":   float(bars[0]["open"]),   # first premarket bar open
+        "vwap":   round(weighted_vwap, 4) if weighted_vwap else None,
+        "bars":   len(bars),
+        "note":   None,
+    }
