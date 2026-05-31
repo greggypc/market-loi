@@ -12,7 +12,7 @@ import smtplib
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from config import EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER, WATCHLIST
+from config import EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECEIVER
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +74,21 @@ def _send(subject: str, html: str):
         logger.error(f"Email send failed: {e}")
 
 
-def _sector_sections(rows: list[dict], row_fn) -> str:
-    """Build sector-grouped table rows using a per-row render function."""
-    by_symbol = {r["symbol"]: r for r in rows}
+def _sector_sections(rows: list, row_fn) -> str:
+    """Build sector-grouped table rows, ordered by sector as returned from DB."""
+    # Preserve sector order as it appears in the rows (already sorted by Supabase)
+    seen_sectors = []
+    by_sector = {}
+    for r in rows:
+        s = r.get("sector", "Other")
+        if s not in by_sector:
+            seen_sectors.append(s)
+            by_sector[s] = []
+        by_sector[s].append(r)
+
     html = ""
-    for sector_name, sector_data in WATCHLIST.items():
-        sector_rows = [by_symbol[t] for t in sector_data["tickers"] if t in by_symbol]
+    for sector_name in seen_sectors:
+        sector_rows = by_sector[sector_name]
         if not sector_rows:
             continue
         html += f'<tr><td colspan="99" class="sector">{sector_name.upper()}</td></tr>'
