@@ -122,6 +122,46 @@ def get_prior_day_ohlc(ticker: str) -> Optional[dict]:
     }
 
 
+def verify_ticker(symbol: str) -> dict:
+    """
+    Check whether Tradier has data for a symbol.
+    Returns a dict with keys: valid (bool), name, exchange, last, type, error.
+    """
+    symbol = symbol.upper().strip()
+    try:
+        r = requests.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            headers=HEADERS,
+            params={"symbols": symbol, "greeks": "false"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json().get("quotes", {}).get("quote")
+
+        # Tradier returns null or a dict with no 'last' for unknown symbols
+        if not data or data == "null":
+            return {"valid": False, "error": f"Symbol '{symbol}' not found on Tradier"}
+
+        if isinstance(data, list):
+            data = data[0]
+
+        last = data.get("last") or data.get("close") or data.get("prevclose")
+        if last is None:
+            return {"valid": False, "error": f"No price data available for '{symbol}'"}
+
+        return {
+            "valid":    True,
+            "symbol":   data.get("symbol", symbol),
+            "name":     data.get("description", ""),
+            "exchange": data.get("exch", ""),
+            "last":     float(last),
+            "type":     data.get("type", ""),
+            "error":    None,
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
 def get_premarket_range(ticker: str, snapshot_date: str = None) -> dict:
     """
     Calculate premarket high, low, open (first bar), and VWAP
