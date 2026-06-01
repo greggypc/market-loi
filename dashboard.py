@@ -112,15 +112,15 @@ DASHBOARD_HTML = """
     .panel { display:none; }
     .panel.active { display:block; }
     .sector-label { background:var(--surface); color:var(--accent); font-weight:700;
-                    padding:5px 10px; font-size:11px; letter-spacing:.08em;
+                    padding:5px 10px; font-size:13px; letter-spacing:.08em;
                     border-left:3px solid var(--accent); margin:14px 0 4px 0; }
-    table { width:100%; border-collapse:collapse; font-size:11px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
     th { background:var(--head-bg); color:#7dd3fc; padding:5px 8px;
-         text-align:right; white-space:nowrap; font-size:10px;
+         text-align:left; white-space:nowrap; font-size:10px;
          letter-spacing:.04em; position:sticky; top:0; }
     th:first-child, th:last-child { text-align:left; }
     td { padding:4px 8px; border-bottom:1px solid var(--border);
-         text-align:right; white-space:nowrap; }
+         text-align:left; white-space:nowrap; }
     td:first-child { text-align:left; font-weight:600; }
     tr:hover td { background:var(--surface); }
     .pos { color:var(--green); font-weight:600; }
